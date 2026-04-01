@@ -1,0 +1,154 @@
+import os                  # importa modulul os, folosit pentru lucrul cu directoare si cai de fisiere
+import sys                 # importa modulul sys, folosit aici pentru argumentele din linia de comanda
+import struct              # importa struct, folosit pentru a interpreta octeti binari ca numere
+
+
+# definirea claselor (conform diagramei uml)
+
+class Genericfile:         # defineste o clasa de baza generala pentru orice tip de fisier
+    """interfata de baza care forteaza implementarea metodelor in subclase"""  # explica rolul clasei
+
+    def get_path(self):    # metoda care ar trebui sa intoarca calea fisierului
+        raise NotImplementedError("metoda get_path nu este implementata")  # obliga subclasele sa o implementeze
+
+    def get_freq(self):    # metoda care ar trebui sa intoarca frecventele octetilor
+        raise NotImplementedError("metoda get_freq nu este implementata")  # obliga subclasele sa o implementeze
+
+
+class Textascii(Genericfile):   # defineste clasa pentru fisiere text ASCII, mosteneste Genericfile
+    def __init__(self, path_absolut, frecvente):   # constructorul clasei
+        self.path_absolut = path_absolut           # salveaza calea completa a fisierului
+        self.frecvente = frecvente                 # salveaza dictionarul de frecvente al octetilor
+
+    def get_path(self):                            # implementarea metodei get_path
+        return self.path_absolut                   # intoarce calea fisierului
+
+    def get_freq(self):                            # implementarea metodei get_freq
+        return self.frecvente                      # intoarce frecventele octetilor
+
+
+class Xmlfile(Textascii):                          # defineste clasa pentru fisiere XML, mosteneste Textascii
+    def __init__(self, path_absolut, frecvente, first_tag):   # constructorul clasei Xmlfile
+        super().__init__(path_absolut, frecvente)             # apeleaza constructorul din Textascii
+        self.first_tag = first_tag                            # salveaza primul tag gasit in fisier
+
+    def get_first_tag(self):                     # metoda pentru a obtine primul tag XML
+        return self.first_tag                    # intoarce primul tag
+
+
+class Textunicode(Genericfile):                  # defineste clasa pentru fisiere text Unicode
+    def __init__(self, path_absolut, frecvente): # constructorul clasei
+        self.path_absolut = path_absolut         # salveaza calea completa a fisierului
+        self.frecvente = frecvente               # salveaza frecventele octetilor
+
+    def get_path(self):                          # implementarea metodei get_path
+        return self.path_absolut                 # intoarce calea fisierului
+
+    def get_freq(self):                          # implementarea metodei get_freq
+        return self.frecvente                    # intoarce frecventele
+
+
+class Binary(Genericfile):                       # defineste clasa pentru fisiere binare generale
+    def __init__(self, path_absolut, frecvente): # constructorul clasei
+        self.path_absolut = path_absolut         # salveaza calea fisierului
+        self.frecvente = frecvente               # salveaza frecventele octetilor
+
+    def get_path(self):                          # implementarea metodei get_path
+        return self.path_absolut                 # intoarce calea fisierului
+
+    def get_freq(self):                          # implementarea metodei get_freq
+        return self.frecvente                    # intoarce frecventele
+
+
+class Bmp(Binary):                               # defineste clasa pentru fisiere BMP, mosteneste Binary
+    def __init__(self, path_absolut, frecvente, width, height, bpp):   # constructorul BMP
+        super().__init__(path_absolut, frecvente)                      # apeleaza constructorul din Binary
+        self.width = width                                             # salveaza latimea imaginii
+        self.height = height                                           # salveaza inaltimea imaginii
+        self.bpp = bpp                                                 # salveaza numarul de biti pe pixel
+
+    def show_info(self):                                               # metoda care afiseaza informatiile BMP
+        """afiseaza informatiile specifice cerute pentru bmp"""        # comentariu explicativ
+        print(f"BMP: {self.path_absolut} | rezolutie: {self.width}x{self.height} | bpp: {self.bpp}")  # afiseaza detaliile BMP
+
+
+# analiza si parcurgere
+
+def analyze_file(file_path):                          # functie care analizeaza un fisier si decide ce tip este
+    """identifica tipul de fisier pe baza continutului binar, indiferent de extensie"""  # explicatia functiei
+    try:                                              # incearca sa execute blocul, ca sa evite oprirea programului la erori
+        with open(file_path, 'rb') as f:             # deschide fisierul in mod binar pentru citire
+            content = f.read()                       # citeste tot continutul fisierului in memorie
+            if not content:                          # verifica daca fisierul este gol
+                return None                          # daca e gol, nu il clasifica si intoarce None
+
+            # calculam frecventa fiecarui octet (0-255)
+            freq = {}                                # creeaza un dictionar gol pentru frecventele octetilor
+            for byte in content:                     # parcurge fiecare octet din continut
+                freq[byte] = freq.get(byte, 0) + 1  # creste frecventa octetului curent cu 1
+
+            total_bytes = len(content)               # salveaza numarul total de octeti din fisier
+
+            # 1. verificare unicode: caracterul 0 apare in >= 30% din text
+            if (freq.get(0, 0) / total_bytes) >= 0.3:   # verifica daca octetul 0 apare in cel putin 30% din fisier
+                return Textunicode(file_path, freq)     # daca da, considera fisierul ca fiind text Unicode
+
+            # 2. verificare bmp: verificam header-ul binar 'bm'
+            if content.startswith(b'BM') and len(content) > 30:   # verifica daca fisierul incepe cu semnatura BMP si are destui octeti
+                # extragem width (offset 18), height (offset 22) si bpp (offset 28)
+                width = struct.unpack('<I', content[18:22])[0]    # citeste latimea BMP din octetii 18-21, little endian, unsigned int
+                height = struct.unpack('<I', content[22:26])[0]   # citeste inaltimea BMP din octetii 22-25
+                bpp = struct.unpack('<H', content[28:30])[0]      # citeste bits per pixel din octetii 28-29, unsigned short
+                return Bmp(file_path, freq, width, height, bpp)   # intoarce un obiect Bmp cu informatiile extrase
+
+            # 3. verificare ascii: frecvente mari pentru intervalul standard {9,10,13,32...127}
+            valid_ascii = [9, 10, 13] + list(range(32, 128))      # defineste octetii considerati valizi pentru text ASCII
+            ascii_count = sum(freq.get(b, 0) for b in valid_ascii) # calculeaza cati octeti din fisier sunt in setul ASCII valid
+
+            if (ascii_count / total_bytes) > 0.85:                # daca peste 85% din fisier pare ASCII
+                # daca e ascii, verificam daca este xml (incepe cu tag-ul '<')
+                stripped_content = content.strip()                # elimina spatiile goale de la inceput si sfarsit
+                if stripped_content.startswith(b'<'):             # verifica daca dupa strip fisierul incepe cu <
+                    try:                                          # incearca sa extraga primul tag XML
+                        first_tag = stripped_content.split(b'>')[0][1:].decode('utf-8', errors='ignore')  # extrage textul dintre < si >
+                        return Xmlfile(file_path, freq, first_tag) # daca reuseste, intoarce un obiect Xmlfile
+                    except:                                       # daca apare orice eroare la extragerea tag-ului
+                        return Textascii(file_path, freq)         # il trateaza doar ca text ASCII simplu
+                return Textascii(file_path, freq)                 # daca nu incepe cu <, il trateaza ca text ASCII
+
+            # 4. binar (frecvente distribuite uniform)
+            return Binary(file_path, freq)                        # daca nu e Unicode, BMP sau ASCII, il clasifica drept binar general
+
+    except Exception as e:                                        # daca apare orice eroare la deschiderea sau analiza fisierului
+        return None                                               # intoarce None, adica fisierul nu a fost procesat
+
+
+def main():                                                       # functia principala a programului
+    # citirea directorului din linia de comanda
+    if len(sys.argv) < 2:                                         # verifica daca utilizatorul a dat argumentul cu directorul
+        print("eroare: trebuie sa specificati un director ca parametru.")  # afiseaza mesaj de eroare
+        return                                                   # opreste executia functiei main
+
+    target_directory = sys.argv[1]                               # ia primul argument din linia de comanda, adica directorul tinta
+
+    if not os.path.isdir(target_directory):                      # verifica daca argumentul primit este un director valid
+        print(f"eroare: '{target_directory}' nu este un director valid.")  # afiseaza eroare daca nu e director
+        return                                                   # opreste functia
+
+    # parcurgerea recursiva a directorului
+    for root, subdirs, files in os.walk(target_directory):       # parcurge recursiv directorul si toate subdirectoarele lui
+        for file in files:                                       # parcurge fiecare fisier din directorul curent
+            file_path = os.path.join(root, file)                 # construieste calea completa a fisierului
+            file_obj = analyze_file(file_path)                   # analizeaza fisierul si obtine obiectul corespunzator tipului detectat
+
+            # afisare rezultate conform cerintelor temei
+            if isinstance(file_obj, Xmlfile):                    # verifica daca obiectul rezultat este de tip Xmlfile
+                print(f"xml ascii: {file_obj.get_path()}")       # afiseaza calea fisierului XML ASCII
+            elif isinstance(file_obj, Textunicode):              # verifica daca este Textunicode
+                print(f"unicode:   {file_obj.get_path()}")       # afiseaza calea fisierului Unicode
+            elif isinstance(file_obj, Bmp):                      # verifica daca este BMP
+                file_obj.show_info()                             # afiseaza informatiile BMP folosind metoda show_info()
+
+
+if __name__ == "__main__":                                       # verifica daca fisierul a fost rulat direct, nu importat
+    main()                                                       # apeleaza functia principala
